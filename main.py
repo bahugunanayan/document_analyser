@@ -1,47 +1,34 @@
 import os
 import io
+import base64
 import streamlit as st
 import pandas as pd
 from pypdf import PdfReader
 from docx import Document
 from retriever import retrieve_documents
-from gemini_api import generate_answer
+from answer import generate_answer
 
-# --- 1. THE HIDDEN BACKEND: INCREMENTAL INGESTION ---
-
+# --- 1. THE HIDDEN BACKEND: INGESTION ---
 def add_to_knowledge_base(text, filename):
-    """
-    Handles ingestion silently in the background.
-    """
     from langchain_community.vectorstores import FAISS
-    from langchain_google_genai import GoogleGenerativeAIEmbeddings
-    from langchain.text_splitter import RecursiveCharacterTextSplitter
-    from langchain.schema import Document as LangDocument
+    from langchain_openai import OpenAIEmbeddings
+    from langchain_text_splitters import RecursiveCharacterTextSplitter
+    from langchain_core.documents import Document as LangDocument
 
-    # Setup Embeddings
-    embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
+    embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
     vector_store_path = "faiss_index"
-
-    # Split text into chunks
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
     chunks = text_splitter.split_text(text)
-    
-    # Create Document objects with metadata
     docs = [LangDocument(page_content=t, metadata={"source": filename}) for t in chunks]
 
     if os.path.exists(vector_store_path):
-        # Load and MERGE new data
         vector_store = FAISS.load_local(vector_store_path, embeddings, allow_dangerous_deserialization=True)
         vector_store.add_documents(docs)
     else:
-        # Create brand new index
         vector_store = FAISS.from_documents(docs, embeddings)
-
-    # Save updated index
     vector_store.save_local(vector_store_path)
 
 # --- 2. UNIVERSAL FILE EXTRACTOR ---
-
 def extract_text(uploaded_file):
     ext = uploaded_file.name.split('.')[-1].lower()
     try:
@@ -58,50 +45,94 @@ def extract_text(uploaded_file):
         st.error(f"Error reading {uploaded_file.name}: {e}")
     return None
 
-# --- 3. STREAMLIT FRONTEND ---
+# --- 3. CALLBACK TO HANDLE INPUT ---
+def handle_input():
+    user_query = st.session_state["user_query"]
+    if user_query:
+        # Add User Question
+        st.session_state["chat_history"].append({"role": "user", "text": user_query})
+        
+        # Process the answer inside the callback to prevent loops
+        with st.spinner("Analyzing..."):
+            try:
+                context_docs = retrieve_documents(user_query)
+                if st.session_state.get("dev_mode_state", False):
+                    answer = f"🤖 Dev Mode: Found {len(context_docs)} sections."
+                else:
+                    answer = generate_answer(user_query, context_docs)
+                
+                st.session_state["chat_history"].append({"role": "assistant", "text": answer})
+            except Exception as e:
+                st.session_state["chat_history"].append({"role": "assistant", "text": f"⚠️ Error: {str(e)}"})
+        
+        # Clear the input box by resetting the key
+        st.session_state["user_query"] = ""
 
-st.set_page_config(page_title="Private AI Knowledge Base", layout="centered")
-st.title("📚 Intelligent RAG Assistant")
+# --- 4. STREAMLIT FRONTEND CONFIG ---
+st.set_page_config(page_title="KT Assistant", layout="centered")
 
-# Knowledge Base Upload Section
-with st.expander("➕ Add Data to Knowledge Base"):
+st.markdown(
+    """
+    <style>
+    html, body, [data-testid="stAppViewContainer"] { overflow: hidden !important; height: 100vh; }
+    .main .block-container { max-height: 100vh; overflow: hidden !important; padding-top: 1rem; display: flex; flex-direction: column; }
+    .chat-window { 
+        height: 55vh; overflow-y: auto; padding: 20px; border: 1px solid #444; border-radius: 12px; 
+        background-color: var(--secondary-background-color) !important; display: flex; flex-direction: column; 
+        margin-top: 15px; opacity: 1 !important;
+    }
+    .user-container { display: flex; justify-content: flex-end; width: 100%; margin-bottom: 15px; }
+    .assistant-container { display: flex; justify-content: flex-start; width: 100%; margin-bottom: 15px; }
+    .user-bubble { background-color: #2b2b2b; color: #ffffff; padding: 10px 16px; border-radius: 18px 18px 0px 18px; max-width: 80%; border: 1px solid #444; }
+    .assistant-bubble { background-color: #004a99; color: #ffffff; padding: 10px 16px; border-radius: 18px 18px 18px 0px; max-width: 80%; border: 1px solid #0056b3; }
+    .stTextInput div[data-baseweb="input"] { background-color: var(--primary-background-color) !important; border: 1px solid #555 !important; border-radius: 8px !important; box-shadow: none !important; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+# Sidebar
+st.sidebar.title("⚙️ Settings")
+st.session_state["dev_mode_state"] = st.sidebar.checkbox("Dev Mode", value=False)
+if st.sidebar.button("🗑️ Clear Chat History"):
+    st.session_state["chat_history"] = []
+    st.rerun()
+
+if "chat_history" not in st.session_state:
+    st.session_state["chat_history"] = []
+if "processed_uploads" not in st.session_state:
+    st.session_state["processed_uploads"] = []
+
+st.title("📚 Modern Library")
+
+# --- 5. UI SECTIONS ---
+with st.expander("➕ Add Data", expanded=not st.session_state["chat_history"]):
     uploaded_files = st.file_uploader("Upload files", type=["txt", "pdf", "docx", "csv", "xlsx"], accept_multiple_files=True)
     if uploaded_files:
         for uploaded in uploaded_files:
-            with st.status(f"Processing {uploaded.name}...", expanded=False) as status:
-                text = extract_text(uploaded)
-                if text:
-                    add_to_knowledge_base(text, uploaded.name)
-                    status.update(label=f"✅ {uploaded.name} is now searchable!", state="complete")
+            if uploaded.name not in st.session_state["processed_uploads"]:
+                with st.status(f"Processing {uploaded.name}...") as status:
+                    text = extract_text(uploaded)
+                    if text:
+                        add_to_knowledge_base(text, uploaded.name)
+                        st.session_state["processed_uploads"].append(uploaded.name)
+                        status.update(label="✅ Success!", state="complete")
 
 st.divider()
 
-# The Chat Interface
-query = st.text_input("Ask a question about your documents:")
+# THE INPUT FIELD (Trigger on Enter using callback)
+st.text_input("Ask a question", placeholder="Type your query and press Enter...", key="user_query", on_change=handle_input)
 
-if query:
-    with st.spinner("Searching internal documents..."):
-        # Retrieve context
-        context_docs = retrieve_documents(query)
-        
-        # Generate answer using Gemini
-        answer = generate_answer(query, context_docs)
-        
-        # Display Answer
-        st.markdown("### Answer")
-        st.write(answer)
-        
-        # Display Sources with corrected indentation and logic
-        st.divider()
-        with st.expander("View Source Context"):
-            for doc in context_docs:
-                # Type checking to avoid AttributeError
-                if hasattr(doc, 'metadata'):
-                    source_name = doc.metadata.get('source', 'Unknown')
-                    content = doc.page_content
-                else:
-                    source_name = "Unknown Source"
-                    content = str(doc)
+# --- 6. INVERTED CHAT HISTORY ---
+def render_chat_box():
+    chat_html = "<div class='chat-window'>"
+    for entry in reversed(st.session_state["chat_history"]):
+        role, text = entry["role"], entry["text"]
+        container = "user-container" if role == "user" else "assistant-container"
+        bubble = "user-bubble" if role == "user" else "assistant-bubble"
+        chat_html += f'<div class="{container}"><div class="{bubble}">{text}</div></div>'
+    chat_html += "</div>"
+    st.markdown(chat_html, unsafe_allow_html=True)
 
-                st.caption(f"From: {source_name}")
-                st.info(content)
+if st.session_state["chat_history"]:
+    render_chat_box()

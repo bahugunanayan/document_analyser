@@ -23,9 +23,10 @@ This project demonstrates a simple Retrieval-Augmented Generation (RAG) applicat
    ```
 pip install -r requirements.txt
    ```
-2. Set your Google Gemini API key in a `.env` file:
+2. Set your OpenAI API key in a `.env` file:
    ```
-GEMINI_API_KEY=your_api_key_here
+OPENAI_API_KEY=your_openai_api_key_here
+OPENAI_MODEL=gpt-3.5-turbo  # optional, default used if unset
    ```
 3. Add your documents (plain text files) to the `data/` folder.
 4. Run the ingestion script:
@@ -52,6 +53,13 @@ streamlit run main.py
 - When a user asks a question, the app retrieves the most relevant documents using vector search (retriever.py).
 - These documents, along with the question, are sent to the Gemini API (gemini_api.py).
 - The Gemini API generates a context-aware answer, which is displayed in the Streamlit app (main.py).
+
+## Uploads & Embeddings
+
+- The Streamlit UI (`main.py`) includes an upload section where you can add `.txt`, `.pdf`, `.docx`, `.csv`, and `.xlsx` files. Uploaded files are parsed, split into chunks, and added to a FAISS index stored under `vector_store/`.
+- By default the app uses a local `sentence-transformers` model (`all-MiniLM-L6-v2`) for embeddings to avoid provider model mismatches. To opt into Google GenAI embeddings set the environment variable `USE_GENAI_EMBEDDINGS=1` and optionally `GENAI_EMBEDDING_MODEL` to a supported model id for your account. If the selected Google model is unsupported the app will automatically fall back to local embeddings.
+- Uploaded documents are appended to `vector_store/docs.txt` when merged into an existing index. If the index must be recreated (dimension mismatch or corruption) the `docs.txt` file is overwritten to stay in sync.
+- The app exposes a button to run `ingest.py` from the UI to rebuild the FAISS index immediately after uploads.
 
 ---
 

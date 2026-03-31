@@ -1,5 +1,0 @@
-Google Gemini is a family of large language models developed by Google. It can generate text, answer questions, and perform various natural language processing tasks.
-
-Key points:
-- Gemini can be accessed via API for text generation.
-- It is used in this project to generate answers based on retrieved documents and user queries.

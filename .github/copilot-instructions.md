@@ -7,7 +7,7 @@ Overview
 - Key files:
   - `ingest.py` — reads files in `data/`, computes embeddings, and writes a FAISS index and a docs mapping into `vector_store/` (see `vector_store/index.faiss`, `vector_store/docs.txt`).
   - `retriever.py` — loads the FAISS index and returns the top-k relevant document texts for a query.
-  - `gemini_api.py` — wraps calls to the Google Gemini API. The API key is expected in an environment variable named `GEMINI_API_KEY` (commonly from a `.env`).
+  - `gemini_api.py` — wraps calls to the LLM API. The app now uses OpenAI by default; the API key is expected in an environment variable named `OPENAI_API_KEY` (commonly from a `.env`).
   - `main.py` — Streamlit app entrypoint that wires the retriever and `gemini_api.py` to the UI.
 
 Important workflows & commands
@@ -24,7 +24,9 @@ Project-specific patterns and conventions
 Integration points and external dependencies
 - Google Gemini: usage centralized in `gemini_api.py`. Changes to request shape, temperature, or prompt engineering should be made there.
 - FAISS vector DB: persisted as `vector_store/index.faiss`; treat as a binary artifact produced by `ingest.py`.
-- Environment: expects `GEMINI_API_KEY`. Do not hardcode secrets.
+- Environment: prefers `OPENAI_API_KEY`. `GEMINI_API_KEY` is accepted as a fallback if present. Do not hardcode secrets.
+ - Embeddings: The app defaults to a local `sentence-transformers` model (`all-MiniLM-L6-v2`). To opt into Google GenAI embeddings set `USE_GENAI_EMBEDDINGS=1` and optionally `GENAI_EMBEDDING_MODEL` to a supported model id. The app will fall back to local embeddings if the provider model is unavailable.
+ - Uploads: `main.py` includes a file uploader that saves sources to `data/`, splits text into chunks, adds/merges them into a FAISS index under `vector_store/`, and appends or overwrites `vector_store/docs.txt` to keep plaintext mappings in sync.
 
 Quick examples for PRs
 - When adding a new retrieval feature, update `retriever.py` and add a small example / invocation in `trial.py` or `main.py` to demonstrate it.
