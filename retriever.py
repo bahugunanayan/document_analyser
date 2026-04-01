@@ -6,7 +6,7 @@ from langchain_openai import OpenAIEmbeddings
 MODEL_NAME = "text-embedding-3-small"
 VECTOR_STORE_PATH = "faiss_index"
 
-def retrieve_documents(query, k=2):
+def retrieve_documents(query, k=1):
     """
     Loads the OpenAI-based FAISS index and searches for the top K relevant chunks.
     """
